@@ -156,7 +156,7 @@ class Gateway extends GatewayExtension
                         'description' => $payment->description,
                         'name' => $payment->description,
                         'unit_price' => [
-                            'amount' => $this->toMinorUnits($payment->total()),
+                            'amount' => $this->toMinorUnits($payment->total(), $payment->currency),
                             'currency_code' => $payment->currency,
                         ],
                         // Non-catalog price: Paddle requires either product_id (an existing
@@ -328,7 +328,7 @@ class Gateway extends GatewayExtension
             $body['items'] = [[
                 'item_id' => $items[0]['id'],
                 'type' => 'partial',
-                'amount' => $this->toMinorUnits($amount),
+                'amount' => $this->toMinorUnits($amount, $payment->currency),
             ]];
         }
 
@@ -386,10 +386,19 @@ class Gateway extends GatewayExtension
     }
 
     /**
-     * Paddle amounts are integer strings in the currency's smallest unit (e.g. cents).
+     * Paddle amounts are integer strings in the currency's smallest unit (e.g. cents) —
+     * except for a handful of zero-decimal currencies Paddle supports (confirmed against
+     * their live /currencies endpoint) where the smallest unit *is* the base unit, so
+     * multiplying by 100 would overcharge by 100x.
      */
-    private function toMinorUnits(float $amount): string
+    private function toMinorUnits(float $amount, string $currency): string
     {
+        $zeroDecimalCurrencies = ['JPY', 'KRW', 'VND', 'CLP'];
+
+        if (in_array(strtoupper($currency), $zeroDecimalCurrencies, true)) {
+            return (string) (int) round($amount);
+        }
+
         return (string) (int) round($amount * 100);
     }
 
@@ -433,6 +442,12 @@ class Gateway extends GatewayExtension
 
         if (! hash_equals($expectedSignature, $signature)) {
             throw new Exception('Invalid Paddle webhook signature.');
+        }
+
+        // Reject stale signatures — without this, a correctly-signed payload captured
+        // once (e.g. from logs, a compromised proxy) could be replayed indefinitely.
+        if (abs(time() - (int) $timestamp) > 300) {
+            throw new Exception('Paddle webhook timestamp is too old.');
         }
     }
 }
