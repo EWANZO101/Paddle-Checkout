@@ -5,8 +5,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/EWANZO101/Paddle-Checkout/main/install.sh | bash
 #
 # Run this from your WemX installation root (the directory containing `artisan`).
-# Safe to re-run — every step checks whether it's already done first, and any
-# file this script edits in place is backed up before it's touched.
+# Safe to re-run any time, including to update an existing install to the latest
+# version — the route and controller method are replaced in place (not just left
+# alone if already present), and any file this script edits is backed up first.
 
 set -euo pipefail
 
@@ -32,6 +33,15 @@ line_of() {
 insert_after_line() {
     local target="$1" snippet="$2" line_num="$3"
     sed -i "${line_num}r ${snippet}" "$target"
+}
+
+# Deletes a previously-inserted managed block (everything from the BEGIN
+# marker to the END marker, inclusive) so a re-run replaces it with whatever
+# the snippet currently looks like, instead of leaving a stale copy in place
+# forever once a file is past the "not installed yet" check.
+remove_managed_block() {
+    local target="$1"
+    sed -i '/BEGIN PADDLE CHECKOUT INSTALLER/,/END PADDLE CHECKOUT INSTALLER/d' "$target"
 }
 
 [ -f "artisan" ] && [ -d "app/Http/Controllers/Client" ] \
@@ -83,54 +93,69 @@ mkdir -p "$view_dir"
 curl -fsSL "$REPO_RAW/resources/paddle-checkout.blade.php" -o "$view_dir/paddle-checkout.blade.php"
 say "$view_dir/paddle-checkout.blade.php"
 
-# 3. Route — idempotent, inserted right after the existing gateway callback route
+# 3. Route — replaces its own previously-inserted block on re-run, so updates
+#    to this installer always take effect rather than being silently skipped.
 routes_file="routes/web.php"
-if grep -q "payments.paddle.checkout" "$routes_file"; then
-    say "route already present in routes/web.php, skipping"
-else
-    anchor="    Route::any('/gateways/callbacks/{webhook_id}', [Client\\PaymentsController::class, 'gatewayCallback'])->name('payments.gateway.callback');"
-    line_num=$(line_of "$routes_file" "$anchor")
-    [ -n "$line_num" ] \
-        || die "could not find the expected anchor line in routes/web.php — add the route manually, see INSTALL.md"
-
-    cp "$routes_file" "${routes_file}.bak.$(date +%s)"
-    curl -fsSL "$REPO_RAW/snippets/route.php" -o "$TMP_DIR/route.php"
-    insert_after_line "$routes_file" "$TMP_DIR/route.php" "$line_num"
-    say "route added to routes/web.php (backup saved alongside it)"
+cp "$routes_file" "${routes_file}.bak.$(date +%s)"
+already_had_route=0
+if grep -q "BEGIN PADDLE CHECKOUT INSTALLER" "$routes_file"; then
+    already_had_route=1
+    remove_managed_block "$routes_file"
 fi
 
-# 4. Controller method — idempotent, inserted right before the existing pay() method
+anchor="    Route::any('/gateways/callbacks/{webhook_id}', [Client\\PaymentsController::class, 'gatewayCallback'])->name('payments.gateway.callback');"
+line_num=$(line_of "$routes_file" "$anchor")
+[ -n "$line_num" ] \
+    || die "could not find the expected anchor line in routes/web.php — add the route manually, see INSTALL.md"
+
+curl -fsSL "$REPO_RAW/snippets/route.php" -o "$TMP_DIR/route.php"
+insert_after_line "$routes_file" "$TMP_DIR/route.php" "$line_num"
+say "route $([ "$already_had_route" -eq 1 ] && echo replaced || echo added) in routes/web.php (backup saved alongside it)"
+
+# 4. Controller method — same replace-on-rerun behaviour as the route above.
 controller_file="app/Http/Controllers/Client/PaymentsController.php"
-if grep -q "function paddleCheckout" "$controller_file"; then
-    say "paddleCheckout() already present in PaymentsController.php, skipping"
-else
-    anchor='    public function pay($gatewayConfigId, Payment $payment)'
-    line_num=$(line_of "$controller_file" "$anchor")
-    [ -n "$line_num" ] \
-        || die "could not find the expected anchor method in PaymentsController.php — add paddleCheckout() manually, see INSTALL.md"
-
-    cp "$controller_file" "${controller_file}.bak.$(date +%s)"
-    curl -fsSL "$REPO_RAW/snippets/paddleCheckout-method.php" -o "$TMP_DIR/method.php"
-    insert_after_line "$controller_file" "$TMP_DIR/method.php" "$((line_num - 1))"
-    say "paddleCheckout() added to PaymentsController.php (backup saved alongside it)"
-
-    # Make sure the three classes the new method needs are imported.
-    : > "$TMP_DIR/imports.php"
-    for use_line in \
-        'use App\Models\GatewayConfig;' \
-        'use App\Models\Payment;' \
-        'use Illuminate\Http\Request;'
-    do
-        grep -qF "$use_line" "$controller_file" || printf '%s\n' "$use_line" >> "$TMP_DIR/imports.php"
-    done
-    if [ -s "$TMP_DIR/imports.php" ]; then
-        ns_line=$(line_of "$controller_file" "namespace App\\Http\\Controllers\\Client;")
-        insert_after_line "$controller_file" "$TMP_DIR/imports.php" "$ns_line"
-    fi
-    say "verified required 'use' imports in PaymentsController.php"
+cp "$controller_file" "${controller_file}.bak.$(date +%s)"
+already_had_method=0
+if grep -q "BEGIN PADDLE CHECKOUT INSTALLER" "$controller_file"; then
+    already_had_method=1
+    remove_managed_block "$controller_file"
 fi
 
-# 5. Clear caches so the new route/view/class are picked up immediately
+anchor='    public function pay($gatewayConfigId, Payment $payment)'
+line_num=$(line_of "$controller_file" "$anchor")
+[ -n "$line_num" ] \
+    || die "could not find the expected anchor method in PaymentsController.php — add paddleCheckout() manually, see INSTALL.md"
+
+curl -fsSL "$REPO_RAW/snippets/paddleCheckout-method.php" -o "$TMP_DIR/method.php"
+insert_after_line "$controller_file" "$TMP_DIR/method.php" "$((line_num - 1))"
+say "paddleCheckout() $([ "$already_had_method" -eq 1 ] && echo replaced || echo added) in PaymentsController.php (backup saved alongside it)"
+
+# Make sure the classes the new method needs are imported — additive only,
+# these never need replacing since they don't change between versions.
+: > "$TMP_DIR/imports.php"
+for use_line in \
+    'use App\Models\GatewayConfig;' \
+    'use App\Models\Payment;' \
+    'use App\Models\Subscription;' \
+    'use Illuminate\Http\Request;'
+do
+    grep -qF "$use_line" "$controller_file" || printf '%s\n' "$use_line" >> "$TMP_DIR/imports.php"
+done
+if [ -s "$TMP_DIR/imports.php" ]; then
+    ns_line=$(line_of "$controller_file" "namespace App\\Http\\Controllers\\Client;")
+    insert_after_line "$controller_file" "$TMP_DIR/imports.php" "$ns_line"
+fi
+say "verified required 'use' imports in PaymentsController.php"
+
+# 5. Normalize permissions on everything we just created, so the web server
+#    user (which may be completely different from whoever ran this script —
+#    root via sudo, a deploy user, etc.) can read the new files regardless.
+#    Ownership is deliberately left alone: we don't reliably know the correct
+#    user across every install, and read access is all a web server needs.
+chmod -R a+rX extensions/Gateways/PaddleCheckout "$view_dir" 2>/dev/null || true
+say "normalized permissions on installed files"
+
+# 6. Clear caches so the new route/view/class are picked up immediately
 if command -v php >/dev/null 2>&1; then
     php artisan optimize:clear >/dev/null 2>&1 || true
     say "cleared Laravel caches"
