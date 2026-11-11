@@ -4,16 +4,9 @@ Accept payments via [Paddle](https://paddle.com) (Merchant of Record) in WemX �
 
 ## Installation
 
-1. Extract this zip into your WemX installation's `extensions/Gateways/` directory, so you end up with `extensions/Gateways/PaddleCheckout/Gateway.php`.
-2. In WemX Admin → Gateways → Configs, create a new config for "Paddle Checkout".
-3. Fill in:
-   - **Paddle API Key** — Paddle Dashboard → Developer Tools → Authentication.
-   - **Client-side Token** — same page, under "Client-side tokens" (a separate, publicly-safe token, not the API Key).
-   - **Sandbox Mode** — enable while testing with a Paddle sandbox account.
-4. Save, then copy the **Webhook URL** shown on the config edit page.
-5. In Paddle Dashboard → Developer Tools → Notifications → New destination, paste that URL, subscribe to the `transaction.completed` event, and copy the destination's secret key back into the **Notification Secret Key** field in WemX.
+**See [INSTALL.md](INSTALL.md) for full setup steps.**
 
-That's it — WemX automatically configures Paddle's "default payment link" for you via the API the first time a payment is attempted, so there's no manual Paddle Dashboard checkout-URL setup required.
+Quick version: unlike most WemX gateways, this one needs a small checkout page added to your WemX install, not just the extension folder — because Paddle Billing's checkout is a client-side overlay (Paddle.js), not a hosted page you can redirect to. INSTALL.md walks through all 5 steps, including the one route and one controller method you need to add.
 
 ## How it works
 
