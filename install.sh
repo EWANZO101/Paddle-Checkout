@@ -40,6 +40,31 @@ insert_after_line() {
 [ -f "app/Http/Controllers/Client/PaymentsController.php" ] \
     || die "app/Http/Controllers/Client/PaymentsController.php not found — is this really a WemX v3 install?"
 
+# Many WemX installs lock down extensions/, app/, routes/, etc. to root (or the
+# web server user), unwritable by a normal shell login — this check fails fast
+# with a clear fix instead of a confusing mid-script `mkdir: Permission denied`.
+# This also catches the single most common mistake with this installer:
+# `sudo curl ... | bash` only sudo's the curl half of the pipe — bash (which
+# does the actual writing) still runs as your normal user. Use
+# `curl ... | sudo bash` instead (sudo wrapping bash, not curl).
+if [ ! -w "." ] || { mkdir -p extensions/Gateways 2>/dev/null && [ ! -w "extensions/Gateways" ]; }; then
+    cat >&2 <<'EOF'
+Error: this user can't write to this WemX installation.
+
+If you ran this as:
+    sudo curl -fsSL .../install.sh | bash
+...that only applies sudo to curl (the download) — bash (which does the
+actual writing) still runs as your normal user. Use this instead, with sudo
+wrapping bash rather than curl:
+
+    curl -fsSL https://raw.githubusercontent.com/EWANZO101/Paddle-Checkout/main/install.sh | sudo bash
+
+Or su/sudo to whichever user owns this WemX install, then run the plain
+(non-sudo) one-liner as that user.
+EOF
+    exit 1
+fi
+
 echo "==> Installing Paddle Checkout gateway for WemX"
 
 # 1. Extension folder
