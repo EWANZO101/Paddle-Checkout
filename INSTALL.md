@@ -1,8 +1,22 @@
 # Installing Paddle Checkout
 
-Unlike most WemX gateways, this one needs a few small additions to your WemX core files, not just a drop-in extension folder. That's because **Paddle Billing's checkout is a client-side overlay (Paddle.js), not a plain hosted page you can redirect to** — Paddle has no "checkout page URL" to send customers to directly, so this extension ships a small page of its own that loads Paddle.js and opens the overlay. All five steps below are required for payments to actually work.
+Unlike most WemX gateways, this one needs a few small additions to your WemX core files, not just a drop-in extension folder. That's because **Paddle Billing's checkout is a client-side overlay (Paddle.js), not a plain hosted page you can redirect to** — Paddle has no "checkout page URL" to send customers to directly, so this extension ships a small page of its own that loads Paddle.js and opens the overlay.
 
-## 1. Add the extension
+## Quick install
+
+Run this from your WemX installation root (the directory containing `artisan`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/EWANZO101/Paddle-Checkout/main/install.sh | bash
+```
+
+It does exactly steps 1–4 below for you — backing up `routes/web.php` and `PaymentsController.php` before editing them, and safe to re-run (it skips anything already in place). You still need step 5 (configuring the gateway in WemX admin).
+
+Prefer to do it by hand, or want to see exactly what the script changes first? Read [`install.sh`](install.sh) or follow the manual steps below.
+
+## Manual install
+
+### 1. Add the extension
 
 Extract this repo so you end up with:
 
@@ -10,7 +24,7 @@ Extract this repo so you end up with:
 extensions/Gateways/PaddleCheckout/Gateway.php
 ```
 
-## 2. Add the checkout view
+### 2. Add the checkout view
 
 Copy `resources/paddle-checkout.blade.php` from this repo to:
 
@@ -20,7 +34,7 @@ resources/client_area/default/payments/paddle-checkout.blade.php
 
 (If you're on a custom theme, use that theme's `payments/` folder instead of `default/`.)
 
-## 3. Add one route
+### 3. Add one route
 
 Open `routes/web.php`, find the `Route::middleware(['web'])->group(...)` block (it already contains `payments.gateway.webhook` and `payments.gateway.callback`), and add this line inside it:
 
@@ -28,7 +42,7 @@ Open `routes/web.php`, find the `Route::middleware(['web'])->group(...)` block (
 Route::get('/payments/paddle/checkout', [Client\PaymentsController::class, 'paddleCheckout'])->name('payments.paddle.checkout');
 ```
 
-## 4. Add one controller method
+### 4. Add one controller method
 
 Open `app/Http/Controllers/Client/PaymentsController.php` and add this method anywhere inside the `PaymentsController` class (e.g. just above the existing `pay()` method):
 
@@ -73,7 +87,7 @@ use App\Models\Payment;
 use Illuminate\Http\Request;
 ```
 
-## 5. Configure the gateway in WemX
+### 5. Configure the gateway in WemX
 
 1. **Admin → Gateways → Configs** → create a new config for "Paddle Checkout".
 2. Fill in:

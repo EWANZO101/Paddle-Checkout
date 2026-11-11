@@ -11,9 +11,28 @@
 set -euo pipefail
 
 REPO_RAW="https://raw.githubusercontent.com/EWANZO101/Paddle-Checkout/main"
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT
 
 say() { printf '  - %s\n' "$1"; }
 die() { printf 'Error: %s\n' "$1" >&2; exit 1; }
+
+# Locates $anchor as a fixed (non-regex) string in $target and returns its
+# 1-based line number, or dies if not found.
+line_of() {
+    local target="$1" anchor="$2"
+    grep -nF -- "$anchor" "$target" | head -n1 | cut -d: -f1
+}
+
+# Inserts the contents of file $snippet right after line number $line_num of
+# $target, using sed's `r` command — which copies the file in verbatim with
+# no escape-sequence interpretation, unlike sed/awk `a` or `i` text, which
+# treat backslashes specially and can silently corrupt PHP code full of
+# namespaced class references (e.g. `Client\PaymentsController`).
+insert_after_line() {
+    local target="$1" snippet="$2" line_num="$3"
+    sed -i "${line_num}r ${snippet}" "$target"
+}
 
 [ -f "artisan" ] && [ -d "app/Http/Controllers/Client" ] \
     || die "run this from your WemX installation root (the directory containing 'artisan')."
@@ -31,7 +50,7 @@ say "extensions/Gateways/PaddleCheckout/Gateway.php"
 # 2. Checkout view — respects APP_THEME from .env, falls back to "default"
 THEME="default"
 if [ -f .env ]; then
-    env_theme=$(grep -E '^APP_THEME=' .env | head -n1 | cut -d'=' -f2- | tr -d '"'"'"'"' || true)
+    env_theme=$(sed -n 's/^APP_THEME=\(.*\)$/\1/p' .env | head -n1 | tr -d '"'"'"'' )
     [ -n "$env_theme" ] && THEME="$env_theme"
 fi
 view_dir="resources/client_area/${THEME}/payments"
@@ -44,17 +63,14 @@ routes_file="routes/web.php"
 if grep -q "payments.paddle.checkout" "$routes_file"; then
     say "route already present in routes/web.php, skipping"
 else
-    anchor="payments.gateway.callback');"
-    grep -qF "$anchor" "$routes_file" \
+    anchor="    Route::any('/gateways/callbacks/{webhook_id}', [Client\\PaymentsController::class, 'gatewayCallback'])->name('payments.gateway.callback');"
+    line_num=$(line_of "$routes_file" "$anchor")
+    [ -n "$line_num" ] \
         || die "could not find the expected anchor line in routes/web.php — add the route manually, see INSTALL.md"
 
     cp "$routes_file" "${routes_file}.bak.$(date +%s)"
-    route_line=$(curl -fsSL "$REPO_RAW/snippets/route.php")
-
-    awk -v anchor="$anchor" -v line="$route_line" '
-        { print }
-        index($0, anchor) { print line }
-    ' "$routes_file" > "${routes_file}.tmp" && mv "${routes_file}.tmp" "$routes_file"
+    curl -fsSL "$REPO_RAW/snippets/route.php" -o "$TMP_DIR/route.php"
+    insert_after_line "$routes_file" "$TMP_DIR/route.php" "$line_num"
     say "route added to routes/web.php (backup saved alongside it)"
 fi
 
@@ -63,27 +79,29 @@ controller_file="app/Http/Controllers/Client/PaymentsController.php"
 if grep -q "function paddleCheckout" "$controller_file"; then
     say "paddleCheckout() already present in PaymentsController.php, skipping"
 else
-    anchor='public function pay($gatewayConfigId, Payment $payment)'
-    grep -qF "$anchor" "$controller_file" \
+    anchor='    public function pay($gatewayConfigId, Payment $payment)'
+    line_num=$(line_of "$controller_file" "$anchor")
+    [ -n "$line_num" ] \
         || die "could not find the expected anchor method in PaymentsController.php — add paddleCheckout() manually, see INSTALL.md"
 
     cp "$controller_file" "${controller_file}.bak.$(date +%s)"
-    method_body=$(curl -fsSL "$REPO_RAW/snippets/paddleCheckout-method.php")
-
-    awk -v anchor="$anchor" -v body="$method_body" '
-        index($0, anchor) { print body }
-        { print }
-    ' "$controller_file" > "${controller_file}.tmp" && mv "${controller_file}.tmp" "$controller_file"
+    curl -fsSL "$REPO_RAW/snippets/paddleCheckout-method.php" -o "$TMP_DIR/method.php"
+    insert_after_line "$controller_file" "$TMP_DIR/method.php" "$((line_num - 1))"
     say "paddleCheckout() added to PaymentsController.php (backup saved alongside it)"
 
     # Make sure the three classes the new method needs are imported.
+    : > "$TMP_DIR/imports.php"
     for use_line in \
         'use App\Models\GatewayConfig;' \
         'use App\Models\Payment;' \
         'use Illuminate\Http\Request;'
     do
-        grep -qF "$use_line" "$controller_file" || sed -i "/^namespace /a ${use_line}" "$controller_file"
+        grep -qF "$use_line" "$controller_file" || printf '%s\n' "$use_line" >> "$TMP_DIR/imports.php"
     done
+    if [ -s "$TMP_DIR/imports.php" ]; then
+        ns_line=$(line_of "$controller_file" "namespace App\\Http\\Controllers\\Client;")
+        insert_after_line "$controller_file" "$TMP_DIR/imports.php" "$ns_line"
+    fi
     say "verified required 'use' imports in PaymentsController.php"
 fi
 
