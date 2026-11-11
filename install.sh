@@ -44,6 +44,55 @@ remove_managed_block() {
     sed -i '/BEGIN PADDLE CHECKOUT INSTALLER/,/END PADDLE CHECKOUT INSTALLER/d' "$target"
 }
 
+# Fallback for installs from before this installer wrapped its insertions in
+# BEGIN/END markers: finds a bare, unmarked `paddleCheckout()` method by
+# brace-counting (so it works regardless of exactly how long the method body
+# is) and removes it along with any doc-comment directly above it. Without
+# this, re-running on one of those older installs would insert a second
+# copy of the method next to the first and fatal with "Cannot redeclare".
+remove_legacy_method() {
+    local target="$1"
+    awk '
+        BEGIN { fnline = 0 }
+        { lines[NR] = $0 }
+        /public function paddleCheckout\(/ { if (fnline == 0) fnline = NR }
+        END {
+            if (fnline == 0) { for (i = 1; i <= NR; i++) print lines[i]; exit }
+
+            s = fnline
+            i = fnline - 1
+            while (i >= 1) {
+                t = lines[i]
+                gsub(/^[ \t]+|[ \t]+$/, "", t)
+                if (t == "" || t ~ /^\/\*/ || t ~ /^\*/ || t ~ /\*\/$/ || t ~ /^\/\//) {
+                    s = i; i--
+                } else {
+                    break
+                }
+            }
+
+            depth = 0; started = 0; e = fnline
+            for (j = fnline; j <= NR; j++) {
+                o = lines[j]; gsub(/[^{]/, "", o)
+                c = lines[j]; gsub(/[^}]/, "", c)
+                depth += length(o) - length(c)
+                if (length(o) > 0) started = 1
+                if (started && depth == 0) { e = j; break }
+            }
+
+            if (e + 1 <= NR) {
+                t = lines[e+1]
+                gsub(/^[ \t]+|[ \t]+$/, "", t)
+                if (t == "") e = e + 1
+            }
+
+            for (i = 1; i <= NR; i++) {
+                if (i < s || i > e) print lines[i]
+            }
+        }
+    ' "$target" > "${target}.awktmp" && mv "${target}.awktmp" "$target"
+}
+
 [ -f "artisan" ] && [ -d "app/Http/Controllers/Client" ] \
     || die "run this from your WemX installation root (the directory containing 'artisan')."
 
@@ -101,6 +150,11 @@ already_had_route=0
 if grep -q "BEGIN PADDLE CHECKOUT INSTALLER" "$routes_file"; then
     already_had_route=1
     remove_managed_block "$routes_file"
+elif grep -q "payments.paddle.checkout" "$routes_file"; then
+    # installed by a version of this script from before the marker scheme —
+    # the route is a single self-contained line, safe to just delete by match.
+    already_had_route=1
+    sed -i '/payments\.paddle\.checkout/d' "$routes_file"
 fi
 
 anchor="    Route::any('/gateways/callbacks/{webhook_id}', [Client\\PaymentsController::class, 'gatewayCallback'])->name('payments.gateway.callback');"
@@ -119,6 +173,11 @@ already_had_method=0
 if grep -q "BEGIN PADDLE CHECKOUT INSTALLER" "$controller_file"; then
     already_had_method=1
     remove_managed_block "$controller_file"
+elif grep -q "function paddleCheckout" "$controller_file"; then
+    # installed by a version of this script from before the marker scheme —
+    # remove the old, unmarked method so we don't end up with two of them.
+    already_had_method=1
+    remove_legacy_method "$controller_file"
 fi
 
 anchor='    public function pay($gatewayConfigId, Payment $payment)'
