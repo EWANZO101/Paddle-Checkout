@@ -98,7 +98,7 @@ class Gateway extends GatewayExtension
         return [
             'api_key' => [
                 'label' => 'Paddle API Key',
-                'description' => 'Paddle Dashboard → Developer Tools → Authentication. Use a sandbox API key while "Sandbox Mode" below is enabled.',
+                'description' => 'Paddle Dashboard → Developer Tools → Authentication. Use a sandbox API key while "Sandbox Mode" below is set to Sandbox (Testing).',
                 'type' => 'text',
                 'rules' => ['required', 'string'],
             ],
@@ -116,11 +116,11 @@ class Gateway extends GatewayExtension
             ],
             'sandbox' => [
                 'label' => 'Sandbox Mode',
-                'description' => 'Enable while testing with a Paddle sandbox account. Disable to process real payments.',
+                'description' => 'Select Sandbox (Testing) while using a Paddle sandbox account. Select Live (Production) to process real payments.',
                 'type' => 'select',
                 'options' => [
-                    '0' => 'Disabled (Live)',
-                    '1' => 'Enabled (Sandbox)',
+                    '0' => 'Live (Production)',
+                    '1' => 'Sandbox (Testing)',
                 ],
                 'rules' => ['required'],
                 'default_value' => '0',
